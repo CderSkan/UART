@@ -1,4 +1,4 @@
-// Code your design here
+// baud rate generator
 module BaudGenT(
     input wire         reset_n,           //  Active low reset.
     input wire         clock,             //  The System's main clock.
