@@ -1,81 +1,84 @@
-`timescale 1ns/10ps
-
+`timescale 1ns/1ps
 `include "UART_TX.v"
 `include "UART_RX.v"
 `include "LFSR.v"
 `include "SAR.v"
 
-module UART_TB ();
+module UART_TB;
 
-  // Testbench uses a 25 MHz clock
-  // Want to interface to 115200 baud UART
-  // 25000000 / 115200 = 217 Clocks Per Bit.
-  parameter c_CLOCK_FREQ = 25000000;
-  parameter c_BAUD_RATE  = 115200;
-  parameter c_CLOCK_PERIOD_NS = 40;
-  parameter c_CLKS_PER_BIT    = c_CLOCK_FREQ / c_BAUD_RATE;
-  parameter c_BIT_PERIOD      = 8600;
-
+  // Clock and reset
   reg r_Clock = 0;
+  reg r_Rst_L = 1;
+
+  // UART signals
   reg r_TX_DV = 0;
-  wire w_TX_Active, w_UART_Line;
-  wire w_TX_Serial;
   wire [7:0] w_LFSR_Byte;
-  wire [7:0] w_RX_Byte;
+  wire w_TX_Serial;
   wire w_RX_DV;
-  
+  wire [7:0] w_RX_Byte;
   wire [15:0] w_SAR_Tx;
   wire [15:0] w_SAR_Rx;
 
-  UART_RX #(.CLK_FREQ(c_CLOCK_FREQ), .BAUD_RATE(c_BAUD_RATE)) UART_RX_Inst
-    (.i_Clock(r_Clock),
-     .i_RX_Serial(w_UART_Line),
-     .o_RX_DV(w_RX_DV),
-     .o_RX_Byte(w_RX_Byte)
-     );
+  // Instantiate the UART modules
+  UART_TX #(.CLK_FREQ(25000000), .BAUD_RATE(115200)) UART_TX_INST (
+    .i_Rst_L(r_Rst_L),
+    .i_Clock(r_Clock),
+    .i_TX_DV(r_TX_DV),
+    .i_TX_Byte(w_LFSR_Byte),
+    .o_TX_Active(),
+    .o_TX_Serial(w_TX_Serial),
+    .o_TX_Done()
+  );
 
-  UART_TX #(.CLK_FREQ(c_CLOCK_FREQ), .BAUD_RATE(c_BAUD_RATE)) UART_TX_Inst
-    (.i_Clock(r_Clock),
-     .i_TX_DV(r_TX_DV),
-     .i_TX_Byte(w_LFSR_Byte),
-     .o_TX_Active(w_TX_Active),
-     .o_TX_Serial(w_TX_Serial),
-     .o_TX_Done()
-     );
+  UART_RX #(.CLK_FREQ(25000000), .BAUD_RATE(115200)) UART_RX_INST (
+    .i_Clock(r_Clock),
+    .i_RX_Serial(w_TX_Serial),
+    .o_RX_DV(w_RX_DV),
+    .o_RX_Byte(w_RX_Byte)
+  );
 
-  LFSR #(.WIDTH(16), .SEED(16'hACE1)) LFSR_Inst
-    (.i_Clock(r_Clock),
-     .i_Enable(!w_TX_Active && !r_TX_DV),
-     .o_LFSR_Byte(w_LFSR_Byte)
-     );
+  LFSR #(.WIDTH(16), .SEED(16'hACE1)) LFSR_INST (
+    .i_Clock(r_Clock),
+    .i_Enable(r_TX_DV),
+    .o_LFSR_Byte(w_LFSR_Byte)
+  );
 
-  SAR #(.WIDTH(16)) SAR_Tx_Inst
-    (.i_Clock(r_Clock),
-     .i_Enable(r_TX_DV),
-     .i_Data(w_LFSR_Byte),
-     .o_SAR(w_SAR_Tx)
-     );
+  SAR #(.WIDTH(16)) SAR_TX_INST (
+    .i_Clock(r_Clock),
+    .i_Enable(r_TX_DV),
+    .i_Data(w_LFSR_Byte),
+    .o_SAR(w_SAR_Tx)
+  );
 
-  SAR #(.WIDTH(16)) SAR_Rx_Inst
-    (.i_Clock(r_Clock),
-     .i_Enable(w_RX_DV),
-     .i_Data(w_RX_Byte),
-     .o_SAR(w_SAR_Rx)
-     );
+  SAR #(.WIDTH(16)) SAR_RX_INST (
+    .i_Clock(r_Clock),
+    .i_Enable(w_RX_DV),
+    .i_Data(w_RX_Byte),
+    .o_SAR(w_SAR_Rx)
+  );
 
-  // Keeps the UART Receive input high (default) when
-  // UART transmitter is not active
-  assign w_UART_Line = w_TX_Active ? w_TX_Serial : 1'b1;
-
-  always
-    #(c_CLOCK_PERIOD_NS/2) r_Clock <= !r_Clock;
+  // Clock generation
+  always #10 r_Clock = ~r_Clock;  // 50MHz clock
 
   // Main Testing:
   initial
   begin
     integer i;
 
-    for (i = 0; i < 10; i = i + 1) begin  // Reduced iterations for testing
+    // Open a VCD file for waveform analysis
+    $dumpfile("dump.vcd");
+    $dumpvars(0, UART_TB);
+    $dumpvars(1, UART_TX_INST);
+    $dumpvars(1, UART_RX_INST);
+
+    // Apply reset
+    r_Rst_L = 1'b0;
+    #100;
+    r_Rst_L = 1'b1;
+    #100;
+
+    for (i = 0; i < 10; i = i + 1) begin
+      $display("Starting iteration %0d", i);
       // Tell UART to send a command (exercise TX)
       @(posedge r_Clock);
       @(posedge r_Clock);
@@ -84,13 +87,19 @@ module UART_TB ();
       r_TX_DV <= 1'b0;
 
       // Wait for the data to be received
-      @(posedge w_RX_DV);
+      wait (w_RX_DV);
+
+      // Debug: print values for each iteration
+      $display("LFSR Byte Sent: %h", w_LFSR_Byte);
+      $display("Received Byte: %h", w_RX_Byte);
 
       // Check that the correct command was received
       if (w_RX_Byte !== w_LFSR_Byte)
         $display("Test Failed - Incorrect Byte Received. Expected: %h, Received: %h", w_LFSR_Byte, w_RX_Byte);
       else
         $display("Test Passed - Correct Byte Received. Byte: %h", w_RX_Byte);
+        
+      #100000; // Add delay between iterations to ensure proper timing
     end
 
     // Check final SAR values
@@ -99,13 +108,8 @@ module UART_TB ();
     else
       $display("Test Failed - Signatures Do Not Match. SAR_Tx: %h, SAR_Rx: %h", w_SAR_Tx, w_SAR_Rx);
 
+    #1000;  // Add a delay to ensure the simulation runs long enough
     $finish();
   end
 
-  initial 
-  begin
-    // Required to dump signals to EPWave
-    $dumpfile("dump.vcd");
-    $dumpvars(0);
-  end
 endmodule
