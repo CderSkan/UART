@@ -6,9 +6,15 @@ module SAR #(parameter WIDTH = 16)
    output reg [WIDTH-1:0] o_SAR
    );
 
+  reg [WIDTH-1:0] r_SAR = 0;
+
   always @(posedge i_Clock)
   begin
     if (i_Enable)
-      o_SAR <= o_SAR ^ i_Data;
+      r_SAR <= r_SAR + i_Data;
   end
+
+  assign o_SAR = r_SAR;
 endmodule
+
+
